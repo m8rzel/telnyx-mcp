@@ -89,6 +89,99 @@ with exit code 78.
 Use absolute paths — the server is started as a child process and inherits no shell.
 Transport is stdio; stdout is the protocol channel, so all diagnostics go to stderr.
 
+## Running it with Docker
+
+The image is a two-stage build on `node:20-alpine`: the first stage installs everything
+and compiles TypeScript, the second one keeps only `node_modules` (production), `dist/`
+and `package.json`. No ffmpeg, no port, no `HEALTHCHECK` — a stdio server has nothing a
+health probe could talk to.
+
+### Build it yourself
+
+```bash
+docker build -t telnyx-mcp .
+```
+
+### Or pull it from GHCR
+
+Every push to `main` publishes `ghcr.io/m8rzel/telnyx-mcp:latest` for `linux/amd64` and
+`linux/arm64`; a `v*` tag publishes `:1.2.3` and `:1.2` alongside it.
+
+**This repository is private, so the package is private too** — pulling requires a login
+with a personal access token (classic) that carries the `read:packages` scope:
+
+```bash
+docker login ghcr.io -u m8rzel        # password = the PAT, not your GitHub password
+docker pull ghcr.io/m8rzel/telnyx-mcp:latest
+```
+
+### Run it
+
+```bash
+docker run --rm -i \
+  -e TELNYX_API_KEY="$TELNYX_API_KEY" \
+  -e TELNYX_TTS_OUTPUT_DIR="$HOME/telnyx-audio" \
+  -v "$HOME/telnyx-audio:$HOME/telnyx-audio" \
+  ghcr.io/m8rzel/telnyx-mcp:latest
+```
+
+It then waits silently for JSON-RPC on stdin; `telnyx-mcp ready. Output directory: …` on
+stderr means it is up. Ctrl-C to stop.
+
+### Wiring the container into an MCP client
+
+```json
+{
+  "mcpServers": {
+    "telnyx": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "-e", "TELNYX_API_KEY",
+        "-e", "TELNYX_TTS_OUTPUT_DIR=/Users/marcel/telnyx-audio",
+        "-v", "/Users/marcel/telnyx-audio:/Users/marcel/telnyx-audio",
+        "ghcr.io/m8rzel/telnyx-mcp:latest"
+      ],
+      "env": {
+        "TELNYX_API_KEY": "your-telnyx-api-key"
+      }
+    }
+  }
+}
+```
+
+`-e TELNYX_API_KEY` without a value passes the variable through from the `env` block
+above, so the key never appears in the argument list of a `docker` process. Replace
+`/Users/marcel/telnyx-audio` with a directory that exists on your machine, and create it
+before the first start — Docker would otherwise create it as a root-owned directory.
+
+### Three things that will bite you
+
+| Rule | Why |
+| --- | --- |
+| `-i`, never `-t` | A TTY turns stdio into a terminal: line editing, echo and control sequences end up in the stream and corrupt the JSON-RPC frames. `docker run -it` is right for a shell and wrong for an MCP server. |
+| The audio directory needs the **same absolute path inside and outside** | `speak` and `render_script` return the *path* of the MP3, never the audio itself. Mount `~/telnyx-audio` to `/data` and the client is handed `/data/foo.mp3` — a path that does not exist on your machine. Mounting the directory onto itself and pointing `TELNYX_TTS_OUTPUT_DIR` at it keeps both sides in agreement. |
+| `--rm` | The MCP client starts one container per session and ends it when it quits. Without `--rm` every client restart leaves another stopped container behind. |
+
+### File ownership
+
+The container runs as the unprivileged `node` user that ships with the image (uid 1000).
+On Docker Desktop for macOS the bind mount is owned by the calling user regardless, so
+this needs no attention. On Linux it does: if your own uid is not 1000, the server cannot
+write into the mounted directory and `speak` fails with `EACCES`. Start it as yourself in
+that case:
+
+```bash
+docker run --rm -i --user "$(id -u):$(id -g)" \
+  -e TELNYX_API_KEY="$TELNYX_API_KEY" \
+  -e TELNYX_TTS_OUTPUT_DIR="$HOME/telnyx-audio" \
+  -v "$HOME/telnyx-audio:$HOME/telnyx-audio" \
+  ghcr.io/m8rzel/telnyx-mcp:latest
+```
+
+In an MCP client config the same flags go into the `args` array — `"--user", "501:20"`
+with the numbers from `id -u` and `id -g`, because `$(…)` is not expanded there.
+
 ## Speaking rate
 
 Telnyx has **no single rate field**. The `rate` parameter here is a multiplier
@@ -180,7 +273,9 @@ npm run check    # all three
 ```
 
 Dependency versions are pinned exactly, so `npm install` reproduces the tested tree even
-though no lockfile is committed.
+though no lockfile is committed. The Docker build follows the same rule: it runs
+`npm install`, and automatically switches to `npm ci` as soon as a `package-lock.json`
+is committed.
 
 Tests mock the HTTP layer and run against real LAME-encoded MP3 fixtures (base64-embedded
 in `tests/fixtures/index.ts`, so the repository holds no binary blobs), which means the
