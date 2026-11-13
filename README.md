@@ -89,33 +89,34 @@ with exit code 78.
 Use absolute paths — the server is started as a child process and inherits no shell.
 Transport is stdio; stdout is the protocol channel, so all diagnostics go to stderr.
 
-## Running it with Docker
+## Mit Docker betreiben
 
-The image is a two-stage build on `node:20-alpine`: the first stage installs everything
-and compiles TypeScript, the second one keeps only `node_modules` (production), `dist/`
-and `package.json`. No ffmpeg, no port, no `HEALTHCHECK` — a stdio server has nothing a
-health probe could talk to.
+Das Image ist ein zweistufiger Build auf `node:20-alpine`: Die erste Stufe installiert
+alles und kompiliert TypeScript, die zweite übernimmt nur `node_modules` (ohne
+Dev-Abhängigkeiten), `dist/` und `package.json`. Kein ffmpeg, kein Port, kein
+`HEALTHCHECK` — ein stdio-Server hat nichts, womit eine Health-Probe reden könnte.
 
-### Build it yourself
+### Image selbst bauen
 
 ```bash
 docker build -t telnyx-mcp .
 ```
 
-### Or pull it from GHCR
+### Oder aus der GHCR holen
 
-Every push to `main` publishes `ghcr.io/m8rzel/telnyx-mcp:latest` for `linux/amd64` and
-`linux/arm64`; a `v*` tag publishes `:1.2.3` and `:1.2` alongside it.
+Jeder Push auf `main` veröffentlicht `ghcr.io/m8rzel/telnyx-mcp:latest` für `linux/amd64`
+und `linux/arm64`; ein `v*`-Tag veröffentlicht zusätzlich `:1.2.3` und `:1.2`.
 
-**This repository is private, so the package is private too** — pulling requires a login
-with a personal access token (classic) that carries the `read:packages` scope:
+**Dieses Repository ist privat, also ist das Package ebenfalls privat** — vor dem Pull
+einmal anmelden, mit einem Personal Access Token (classic) mit dem Scope
+`read:packages`:
 
 ```bash
-docker login ghcr.io -u m8rzel        # password = the PAT, not your GitHub password
+docker login ghcr.io -u m8rzel        # Passwort = das Token, nicht das GitHub-Passwort
 docker pull ghcr.io/m8rzel/telnyx-mcp:latest
 ```
 
-### Run it
+### Starten
 
 ```bash
 docker run --rm -i \
@@ -125,10 +126,10 @@ docker run --rm -i \
   ghcr.io/m8rzel/telnyx-mcp:latest
 ```
 
-It then waits silently for JSON-RPC on stdin; `telnyx-mcp ready. Output directory: …` on
-stderr means it is up. Ctrl-C to stop.
+Er wartet dann still auf JSON-RPC über stdin; `telnyx-mcp ready. Output directory: …` auf
+stderr heißt, er läuft. Mit Strg-C wieder raus.
 
-### Wiring the container into an MCP client
+### Den Container in einen MCP-Client einbinden
 
 ```json
 {
@@ -143,33 +144,33 @@ stderr means it is up. Ctrl-C to stop.
         "ghcr.io/m8rzel/telnyx-mcp:latest"
       ],
       "env": {
-        "TELNYX_API_KEY": "your-telnyx-api-key"
+        "TELNYX_API_KEY": "dein-telnyx-api-key"
       }
     }
   }
 }
 ```
 
-`-e TELNYX_API_KEY` without a value passes the variable through from the `env` block
-above, so the key never appears in the argument list of a `docker` process. Replace
-`/Users/marcel/telnyx-audio` with a directory that exists on your machine, and create it
-before the first start — Docker would otherwise create it as a root-owned directory.
+`-e TELNYX_API_KEY` ohne Wert reicht die Variable aus dem `env`-Block oben durch, damit
+der Schlüssel nicht in der Argumentliste eines `docker`-Prozesses auftaucht. Ersetze
+`/Users/marcel/telnyx-audio` durch ein Verzeichnis, das es auf deinem Rechner gibt, und
+lege es vor dem ersten Start an — sonst erzeugt Docker es als root.
 
-### Three things that will bite you
+### Drei Stolpersteine
 
-| Rule | Why |
+| Regel | Warum |
 | --- | --- |
-| `-i`, never `-t` | A TTY turns stdio into a terminal: line editing, echo and control sequences end up in the stream and corrupt the JSON-RPC frames. `docker run -it` is right for a shell and wrong for an MCP server. |
-| The audio directory needs the **same absolute path inside and outside** | `speak` and `render_script` return the *path* of the MP3, never the audio itself. Mount `~/telnyx-audio` to `/data` and the client is handed `/data/foo.mp3` — a path that does not exist on your machine. Mounting the directory onto itself and pointing `TELNYX_TTS_OUTPUT_DIR` at it keeps both sides in agreement. |
-| `--rm` | The MCP client starts one container per session and ends it when it quits. Without `--rm` every client restart leaves another stopped container behind. |
+| `-i`, niemals `-t` | Ein TTY macht aus stdio ein Terminal: Zeileneditor, Echo und Steuersequenzen landen im Strom und zerlegen die JSON-RPC-Frames. `docker run -it` ist für eine Shell richtig und für einen MCP-Server falsch. |
+| Der Audio-Ordner braucht **innen und außen denselben absoluten Pfad** | `speak` und `render_script` liefern den *Pfad* der MP3 zurück, nie die Audiodaten. Mountest du `~/telnyx-audio` nach `/data`, bekommt der Client `/data/foo.mp3` — einen Pfad, den es auf deinem Rechner nicht gibt. Das Verzeichnis auf sich selbst zu mounten und `TELNYX_TTS_OUTPUT_DIR` darauf zu setzen, hält beide Seiten deckungsgleich. |
+| `--rm` | Der MCP-Client startet pro Sitzung einen Container und beendet ihn beim Schließen. Ohne `--rm` bleibt bei jedem Neustart ein gestoppter Container liegen. |
 
-### File ownership
+### Dateirechte
 
-The container runs as the unprivileged `node` user that ships with the image (uid 1000).
-On Docker Desktop for macOS the bind mount is owned by the calling user regardless, so
-this needs no attention. On Linux it does: if your own uid is not 1000, the server cannot
-write into the mounted directory and `speak` fails with `EACCES`. Start it as yourself in
-that case:
+Der Container läuft als unprivilegierter `node`-User, der im Image mitkommt (uid 1000).
+Unter Docker Desktop für macOS gehört der Bind-Mount ohnehin dem aufrufenden Benutzer,
+dort ist nichts zu tun. Unter Linux schon: Ist die eigene uid nicht 1000, kann der Server
+nicht in das gemountete Verzeichnis schreiben und `speak` scheitert mit `EACCES`. Dann
+startest du ihn als dich selbst:
 
 ```bash
 docker run --rm -i --user "$(id -u):$(id -g)" \
@@ -179,8 +180,9 @@ docker run --rm -i --user "$(id -u):$(id -g)" \
   ghcr.io/m8rzel/telnyx-mcp:latest
 ```
 
-In an MCP client config the same flags go into the `args` array — `"--user", "501:20"`
-with the numbers from `id -u` and `id -g`, because `$(…)` is not expanded there.
+In einer MCP-Client-Konfiguration gehören dieselben Flags in das `args`-Array —
+`"--user", "501:20"` mit den Zahlen aus `id -u` und `id -g`, weil `$(…)` dort nicht
+ausgewertet wird.
 
 ## Speaking rate
 
