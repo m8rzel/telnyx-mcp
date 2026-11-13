@@ -1,0 +1,38 @@
+# Installed and built inside the image
+node_modules
+dist
+*.tsbuildinfo
+
+# VCS and CI
+.git
+.gitignore
+.github
+
+# Not needed to build or run the server
+tests
+scripts
+vitest.config.ts
+eslint.config.js
+tsconfig.eslint.json
+.prettierrc.json
+coverage
+
+# Docs
+*.md
+LICENSE
+
+# Secrets — must never reach the build context
+.env
+.env.*
+
+# Generated audio
+*.mp3
+out
+audio
+
+# Local noise
+.scratch
+.DS_Store
+*.log
+Dockerfile
+.dockerignore
