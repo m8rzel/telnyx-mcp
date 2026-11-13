@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Environment — never commit real keys
+.env
+.env.*
+!.env.example
+
+# Generated audio
+*.mp3
+
+out/
+audio/
+
+# Tooling
+coverage/
+.scratch/
+.DS_Store
+*.log
