@@ -96,40 +96,61 @@ alles und kompiliert TypeScript, die zweite übernimmt nur `node_modules` (ohne
 Dev-Abhängigkeiten), `dist/` und `package.json`. Kein ffmpeg, kein Port, kein
 `HEALTHCHECK` — ein stdio-Server hat nichts, womit eine Health-Probe reden könnte.
 
-### Image selbst bauen
+### Ein Befehl
+
+```bash
+git clone https://github.com/m8rzel/telnyx-mcp.git ~/mcp/telnyx-mcp
+cd ~/mcp/telnyx-mcp && bash install.sh
+```
+
+Das ist alles. Kein Dateien-Verschieben, kein JSON-Editieren, kein manuelles Bauen.
+Ab dem zweiten Mal genügt `./install.sh` — den ersten Lauf startest du über `bash`,
+weil das Ausführungsbit einen `git clone` nicht zwingend übersteht; das Skript setzt
+es dann selbst.
+
+Was dabei passiert:
+
+| Schritt | |
+| --- | --- |
+| 1 | Prüft, ob Docker installiert ist **und** der Daemon antwortet. Sonst Abbruch mit Hinweis auf Docker Desktop. |
+| 2 | Baut das Image `telnyx-mcp` aus dem Repo-Verzeichnis — egal, aus welchem Ordner du das Skript aufrufst. |
+| 3 | Legt den Audio-Ordner an: `$HOME/mcp/telnyx-audio`, oder was in `TELNYX_TTS_OUTPUT_DIR` steht. |
+| 4 | Holt den API-Schlüssel aus `$TELNYX_API_KEY`, sonst aus einer vorhandenen `.env`, sonst fragt es dich (ohne die Eingabe anzuzeigen). Sichert ihn in `.env` mit `chmod 600`. |
+| 5 | Registriert den Server in **Claude Code** (falls die CLI `claude` da ist) und in **Claude Desktop** (falls dessen Konfiguration existiert). Findet es keines von beiden, gibt es die fertige JSON-Konfiguration zum Kopieren aus. |
+| 6 | Rauchtest: startet den Container mit genau der registrierten Befehlszeile und lässt ihn per JSON-RPC die vier Werkzeuge melden. |
+| 7 | Sagt dir, wo die MP3s landen und dass Claude einmal neu starten muss. |
+
+Das Skript ist **idempotent**: Nach einem `git pull` lässt du es einfach erneut laufen.
+Einen bestehenden `telnyx`-Eintrag ersetzt es, andere MCP-Server lässt es unberührt —
+und von der Claude-Desktop-Konfiguration legt es vor jeder Änderung eine Sicherungskopie
+`claude_desktop_config.json.bak-<Zeitstempel>` an.
+
+Optionen:
+
+```bash
+bash install.sh --non-interactive   # keine Rückfragen (Schlüssel muss vorliegen)
+bash install.sh --no-register       # nur bauen und testen, nichts registrieren
+bash install.sh --help
+```
+
+### Von Hand, falls du die Schritte einzeln willst
 
 ```bash
 docker build -t telnyx-mcp .
-```
+mkdir -p ~/mcp/telnyx-audio
 
-### Oder aus der GHCR holen
-
-Jeder Push auf `main` veröffentlicht `ghcr.io/m8rzel/telnyx-mcp:latest` für `linux/amd64`
-und `linux/arm64`; ein `v*`-Tag veröffentlicht zusätzlich `:1.2.3` und `:1.2`.
-
-**Dieses Repository ist privat, also ist das Package ebenfalls privat** — vor dem Pull
-einmal anmelden, mit einem Personal Access Token (classic) mit dem Scope
-`read:packages`:
-
-```bash
-docker login ghcr.io -u m8rzel        # Passwort = das Token, nicht das GitHub-Passwort
-docker pull ghcr.io/m8rzel/telnyx-mcp:latest
-```
-
-### Starten
-
-```bash
 docker run --rm -i \
   -e TELNYX_API_KEY="$TELNYX_API_KEY" \
-  -e TELNYX_TTS_OUTPUT_DIR="$HOME/telnyx-audio" \
-  -v "$HOME/telnyx-audio:$HOME/telnyx-audio" \
-  ghcr.io/m8rzel/telnyx-mcp:latest
+  -e TELNYX_TTS_OUTPUT_DIR="$HOME/mcp/telnyx-audio" \
+  -v "$HOME/mcp/telnyx-audio:$HOME/mcp/telnyx-audio" \
+  telnyx-mcp
 ```
 
 Er wartet dann still auf JSON-RPC über stdin; `telnyx-mcp ready. Output directory: …` auf
 stderr heißt, er läuft. Mit Strg-C wieder raus.
 
-### Den Container in einen MCP-Client einbinden
+Und so sieht der Eintrag aus, den der Installer schreibt (`~/Library/Application
+Support/Claude/claude_desktop_config.json` bzw. `claude mcp add`):
 
 ```json
 {
@@ -139,29 +160,28 @@ stderr heißt, er läuft. Mit Strg-C wieder raus.
       "args": [
         "run", "--rm", "-i",
         "-e", "TELNYX_API_KEY",
-        "-e", "TELNYX_TTS_OUTPUT_DIR=/Users/marcel/telnyx-audio",
-        "-v", "/Users/marcel/telnyx-audio:/Users/marcel/telnyx-audio",
-        "ghcr.io/m8rzel/telnyx-mcp:latest"
+        "-e", "TELNYX_TTS_OUTPUT_DIR",
+        "-v", "/Users/marcel/mcp/telnyx-audio:/Users/marcel/mcp/telnyx-audio",
+        "telnyx-mcp"
       ],
       "env": {
-        "TELNYX_API_KEY": "dein-telnyx-api-key"
+        "TELNYX_API_KEY": "dein-telnyx-api-key",
+        "TELNYX_TTS_OUTPUT_DIR": "/Users/marcel/mcp/telnyx-audio"
       }
     }
   }
 }
 ```
 
-`-e TELNYX_API_KEY` ohne Wert reicht die Variable aus dem `env`-Block oben durch, damit
-der Schlüssel nicht in der Argumentliste eines `docker`-Prozesses auftaucht. Ersetze
-`/Users/marcel/telnyx-audio` durch ein Verzeichnis, das es auf deinem Rechner gibt, und
-lege es vor dem ersten Start an — sonst erzeugt Docker es als root.
+`-e TELNYX_API_KEY` ohne Wert reicht die Variable aus dem `env`-Block durch, damit der
+Schlüssel nicht in der Argumentliste eines `docker`-Prozesses auftaucht.
 
 ### Drei Stolpersteine
 
 | Regel | Warum |
 | --- | --- |
 | `-i`, niemals `-t` | Ein TTY macht aus stdio ein Terminal: Zeileneditor, Echo und Steuersequenzen landen im Strom und zerlegen die JSON-RPC-Frames. `docker run -it` ist für eine Shell richtig und für einen MCP-Server falsch. |
-| Der Audio-Ordner braucht **innen und außen denselben absoluten Pfad** | `speak` und `render_script` liefern den *Pfad* der MP3 zurück, nie die Audiodaten. Mountest du `~/telnyx-audio` nach `/data`, bekommt der Client `/data/foo.mp3` — einen Pfad, den es auf deinem Rechner nicht gibt. Das Verzeichnis auf sich selbst zu mounten und `TELNYX_TTS_OUTPUT_DIR` darauf zu setzen, hält beide Seiten deckungsgleich. |
+| Der Audio-Ordner braucht **innen und außen denselben absoluten Pfad** | `speak` und `render_script` liefern den *Pfad* der MP3 zurück, nie die Audiodaten. Mountest du `~/mcp/telnyx-audio` nach `/data`, bekommt der Client `/data/foo.mp3` — einen Pfad, den es auf deinem Rechner nicht gibt. Das Verzeichnis auf sich selbst zu mounten und `TELNYX_TTS_OUTPUT_DIR` darauf zu setzen, hält beide Seiten deckungsgleich. |
 | `--rm` | Der MCP-Client startet pro Sitzung einen Container und beendet ihn beim Schließen. Ohne `--rm` bleibt bei jedem Neustart ein gestoppter Container liegen. |
 
 ### Dateirechte
@@ -169,20 +189,47 @@ lege es vor dem ersten Start an — sonst erzeugt Docker es als root.
 Der Container läuft als unprivilegierter `node`-User, der im Image mitkommt (uid 1000).
 Unter Docker Desktop für macOS gehört der Bind-Mount ohnehin dem aufrufenden Benutzer,
 dort ist nichts zu tun. Unter Linux schon: Ist die eigene uid nicht 1000, kann der Server
-nicht in das gemountete Verzeichnis schreiben und `speak` scheitert mit `EACCES`. Dann
-startest du ihn als dich selbst:
+nicht in das gemountete Verzeichnis schreiben und `speak` scheitert mit `EACCES`. Der
+Installer erkennt das und ergänzt dort automatisch `--user $(id -u):$(id -g)`. Von Hand:
 
 ```bash
 docker run --rm -i --user "$(id -u):$(id -g)" \
   -e TELNYX_API_KEY="$TELNYX_API_KEY" \
-  -e TELNYX_TTS_OUTPUT_DIR="$HOME/telnyx-audio" \
-  -v "$HOME/telnyx-audio:$HOME/telnyx-audio" \
-  ghcr.io/m8rzel/telnyx-mcp:latest
+  -e TELNYX_TTS_OUTPUT_DIR="$HOME/mcp/telnyx-audio" \
+  -v "$HOME/mcp/telnyx-audio:$HOME/mcp/telnyx-audio" \
+  telnyx-mcp
 ```
 
 In einer MCP-Client-Konfiguration gehören dieselben Flags in das `args`-Array —
 `"--user", "501:20"` mit den Zahlen aus `id -u` und `id -g`, weil `$(…)` dort nicht
 ausgewertet wird.
+
+### Optional: Image aus der GHCR statt lokal bauen
+
+**Dieser Weg ist noch nicht aktiv.** Der Workflow dafür liegt als
+`.github/docker.yml` im Repo — also *nicht* in `.github/workflows/`, wo GitHub ihn
+ausführen würde. Grund: Dem schreibenden GitHub-Zugang fehlt der `workflow`-Scope,
+ein Push nach `.github/workflows/` wird mit `403 insufficient scopes` abgelehnt.
+Solange die Datei dort liegt, läuft nichts und es existiert kein Image in der GHCR.
+
+Der Standardweg ist deshalb der lokale Build, den `install.sh` erledigt. Wer den
+GHCR-Weg aktivieren will, verschiebt die Datei einmal von Hand und löscht den
+erklärenden Kommentarblock an ihrem Anfang:
+
+```bash
+git mv .github/docker.yml .github/workflows/docker.yml
+```
+
+Danach veröffentlicht jeder Push auf `main` `ghcr.io/m8rzel/telnyx-mcp:latest` für
+`linux/amd64` und `linux/arm64`; ein `v*`-Tag veröffentlicht zusätzlich `:1.2.3` und
+`:1.2`. Weil dieses Repository privat ist, ist das Package ebenfalls privat — vor dem
+Pull einmal anmelden, mit einem Personal Access Token (classic) mit dem Scope
+`read:packages`:
+
+```bash
+docker login ghcr.io -u m8rzel        # Passwort = das Token, nicht das GitHub-Passwort
+docker pull ghcr.io/m8rzel/telnyx-mcp:latest
+```
 
 ## Speaking rate
 
