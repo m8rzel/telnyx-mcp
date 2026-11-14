@@ -4,6 +4,173 @@ A private MCP server that gives an assistant Telnyx **text-to-speech**: find a v
 synthesise text into an MP3 file, render a whole script with timed pauses, and price a
 job before running it.
 
+## Einrichten — ein Eintrag, kein Clone
+
+`npx` holt das Paket direkt aus GitHub. Kein Clone, kein Docker, kein Build. Das hier
+ist der komplette Vorgang:
+
+```json
+{
+  "mcpServers": {
+    "telnyx": {
+      "command": "npx",
+      "args": ["-y", "git+ssh://git@github.com/m8rzel/telnyx-mcp.git"],
+      "env": {
+        "TELNYX_API_KEY": "<dein-key>",
+        "TELNYX_TTS_OUTPUT_DIR": "/Users/marcel/mcp/telnyx-audio"
+      }
+    }
+  }
+}
+```
+
+Für Claude Code als Einzeiler:
+
+```bash
+mkdir -p ~/mcp/telnyx-audio
+claude mcp add telnyx -s user \
+  -e TELNYX_API_KEY=dein-key \
+  -e TELNYX_TTS_OUTPUT_DIR="$HOME/mcp/telnyx-audio" \
+  -- npx -y git+ssh://git@github.com/m8rzel/telnyx-mcp.git
+```
+
+`TELNYX_TTS_OUTPUT_DIR` muss ein **existierender absoluter Pfad** sein. Die Werkzeuge
+geben den *Pfad* der erzeugten MP3 zurück, nie die Audiodaten — ein relativer Pfad oder
+ein Ordner, den es nicht gibt, liefert dem Client eine Dateiangabe, mit der er nichts
+anfangen kann. Lässt du die Variable weg, landen die Dateien in
+`<os-temp>/telnyx-mcp` und werden vom System irgendwann aufgeräumt.
+
+`-y` unterdrückt die Rückfrage „Ok to proceed?“ — ohne das Flag würde `npx` beim ersten
+Start auf eine Eingabe warten, die ein MCP-Client nie gibt, und in einen Timeout laufen.
+
+### Zugang zum privaten Repo
+
+Das Repository ist privat, also braucht `npx` Credentials für den Clone. Es gibt zwei
+saubere Wege und eine Notlösung:
+
+| Weg | Spec in `args` | Haken |
+| --- | --- | --- |
+| **SSH** (empfohlen) | `git+ssh://git@github.com/m8rzel/telnyx-mcp.git` | Braucht einen entsperrten Schlüssel im `ssh-agent`. Hat der Schlüssel eine Passphrase und erreicht der MCP-Client den Agent nicht, scheitert der Clone — Lösung unten. |
+| **HTTPS + Keychain** | `git+https://github.com/m8rzel/telnyx-mcp.git` | Funktioniert nur, wenn `git` den macOS-Keychain-Helper benutzt und dort ein Token für github.com liegt. Läuft das Token ab, bricht der Start ohne sichtbaren Grund ab. |
+| **PAT in der URL** | `git+https://<token>@github.com/m8rzel/telnyx-mcp.git` | **Nicht benutzen.** Das Token steht im Klartext in der MCP-Config, wird mitgesichert, mitgesynct und landet in jedem Screenshot der Datei. Nur als Notlösung, wenn beides andere ausfällt — und danach das Token rotieren. |
+
+**SSH einrichten (einmalig, macOS).** Der Punkt ist, dass der MCP-Client als
+GUI-Kindprozess startet und nicht die Shell-Umgebung erbt, in der dein `ssh-agent`
+läuft. Mit dem Schlüssel in der Keychain übernimmt der systemweite Agent das:
+
+```bash
+ssh-add --apple-use-keychain ~/.ssh/id_ed25519
+```
+
+und in `~/.ssh/config`:
+
+```
+Host github.com
+  AddKeysToAgent yes
+  UseKeychain yes
+  IdentityFile ~/.ssh/id_ed25519
+```
+
+`UseKeychain yes` lässt `ssh` die Passphrase aus der Keychain holen, statt interaktiv zu
+fragen — genau der Fall, in dem ein Kindprozess ohne Terminal sonst hängen bleibt.
+Prüfen mit `ssh -T git@github.com` (muss ohne Passphrase-Prompt durchlaufen) und danach
+mit dem echten Aufruf:
+
+```bash
+TELNYX_API_KEY=dein-key TELNYX_TTS_OUTPUT_DIR="$HOME/mcp/telnyx-audio" \
+  npx -y git+ssh://git@github.com/m8rzel/telnyx-mcp.git
+```
+
+`telnyx-mcp ready. Output directory: …` auf stderr heißt: läuft. Strg-C beendet.
+
+**HTTPS einrichten.** Zuerst nachsehen, was `git` als Credential-Helper benutzt:
+
+```bash
+git config --get credential.helper        # erwartet: osxkeychain
+git credential-osxkeychain                # muss existieren (Hinweistext = vorhanden)
+```
+
+Steht dort nichts oder etwas anderes, einmal setzen und ein Token hinterlegen:
+
+```bash
+git config --global credential.helper osxkeychain
+git clone https://github.com/m8rzel/telnyx-mcp.git /tmp/telnyx-auth-test
+```
+
+Beim Clone fragt `git` nach Benutzer und Passwort; als Passwort ein Personal Access
+Token mit `repo`-Scope eingeben (nicht das GitHub-Passwort). Es liegt danach in der
+Keychain, und `npx` kommt ohne weitere Eingabe durch. Das Testverzeichnis kannst du
+wieder löschen. Prüfen, dass es sitzt: `git ls-remote https://github.com/m8rzel/telnyx-mcp.git`
+läuft ohne Rückfrage durch.
+
+Die Haken dieses Wegs: Das Token hat ein Ablaufdatum, und wenn es abläuft, startet der
+Server ohne erkennbaren Zusammenhang nicht mehr. Ein klassisches PAT gilt außerdem für
+*alle* privaten Repos des Kontos, nicht nur für dieses — ein Fine-grained Token mit
+Repository-Zugriff nur auf `m8rzel/telnyx-mcp` und `Contents: Read` ist die engere Wahl.
+Und `git config --global` wirkt auf jedes Repo auf dem Rechner.
+
+**So sieht es aus, wenn die Credentials fehlen:** `npx` bricht mit **Exit-Code 128** ab
+(der Fehlercode von `git clone`) und schreibt keine erklärende Meldung in die Ausgabe —
+nachgeprüft in einer Umgebung ohne jeden GitHub-Zugang, für `git+ssh` wie für
+`git+https`. Startet der Server im Client also ohne verständlichen Grund nicht, ist das
+der erste Verdacht. Den Aufruf einmal von Hand im Terminal starten, dann steht die
+eigentliche Ursache da (`Permission denied (publickey)` bzw.
+`could not read Username`).
+
+Die radikale Alternative: Repo öffentlich machen und unter `@m8rzel/telnyx-mcp` auf npm
+veröffentlichen — dann wäre der Eintrag schlicht `npx -y @m8rzel/telnyx-mcp`, ohne jede
+Authentifizierung. Das ist eine Entscheidung über Sichtbarkeit, keine technische.
+
+### Version festnageln
+
+Ohne Angabe nimmt `npx` den aktuellen Stand des Standardbranches. Das heißt: Jeder Push
+auf `main` ändert beim nächsten Start ungefragt die laufende Installation. Ein Commit-ish
+hinter der URL verhindert das:
+
+```text
+git+ssh://git@github.com/m8rzel/telnyx-mcp.git#v1.0.0   ← Tag, empfohlen
+git+ssh://git@github.com/m8rzel/telnyx-mcp.git#main      ← Branch, gleicht dem Standard
+git+ssh://git@github.com/m8rzel/telnyx-mcp.git#a92a2f0   ← Commit, maximal eindeutig
+```
+
+Für den produktiven Eintrag gehört ein **Tag** in die Config. Aktualisieren ist dann ein
+bewusster Schritt: Tag in der Config hochziehen, Client neu starten.
+
+### Startzeit
+
+Gemessen vom `npx`-Aufruf bis zur `initialize`-Antwort auf stdout, Node 22, Git-Remote
+lokal (die Netzlatenz zu GitHub kommt obendrauf):
+
+| Lauf | Zeit | Was passiert |
+| --- | --- | --- |
+| erster Start, leerer npm-Cache | **12–30 s** (4 Messungen: 11,6 / 27,5 / 27,9 / 29,9 s) | Lädt den MCP-SDK-Baum herunter: 92 Pakete, rein netzabhängig |
+| jeder weitere Start | **0,7–1,5 s** | `git ls-remote` plus Start aus dem Cache |
+
+Kompiliert wird **nie** — deshalb ist `dist/` eingecheckt (siehe unten).
+
+Praktisch heißt das: **einmal im Terminal starten, bevor du den Eintrag in den Client
+schreibst.** Danach ist der Cache warm und der Client startet in rund einer Sekunde. Ein
+kalter Erststart von bis zu einer halben Minute kann sonst in den Start-Timeout eines
+MCP-Clients laufen (bei Claude Code per `MCP_TIMEOUT` in Millisekunden anpassbar) — der
+Server wäre dann nicht kaputt, nur zu langsam, und beim nächsten Versuch sofort da.
+
+Zwei Feinheiten: Ein geänderter Commit-ish (Tag statt Branch) ist ein eigener
+Cache-Eintrag, kostet also einmal wieder einen kalten Start. Und ohne Pin ist jeder neue
+Commit auf `main` ebenfalls ein kalter Start.
+
+### Warum `dist/` im Repository liegt
+
+`npx <git-spec>` klont, installiert und packt das Paket. Gibt es ein `prepare`-Script,
+installiert npm dafür zusätzlich **alle** Dev-Abhängigkeiten und kompiliert — bei jedem
+kalten Start, auf dem Rechner des Nutzers. Das kostet Zeit und schafft eine Fehlerquelle,
+die man aus dem MCP-Client kaum sieht: Schlägt der Build fehl, startet der Server nicht,
+und die Meldung dazu versteckt sich in der npx-Ausgabe.
+
+Deshalb liegt das Build-Ergebnis im Repository, `package.json` hat kein `prepare` und
+`files` beschränkt das Paket auf `dist`. Der Preis: `npm run build` muss **vor** jedem
+Commit laufen, sonst weichen Quelle und Build voneinander ab. Siehe
+[CONTRIBUTING.md](CONTRIBUTING.md); `npm run verify:dist` prüft es.
+
 ## Why this exists
 
 The official Telnyx connector ships 43 tools covering numbers, messaging, calls and the
@@ -46,6 +213,9 @@ And let it go.
 
 ## Install
 
+Zum Benutzen: nichts installieren, siehe [Einrichten](#einrichten--ein-eintrag-kein-clone).
+Zum Entwickeln:
+
 ```bash
 git clone git@github.com:m8rzel/telnyx-mcp.git
 cd telnyx-mcp
@@ -69,7 +239,10 @@ with exit code 78.
 | `TELNYX_TTS_TIMEOUT_MS` | no | `120000` | HTTP timeout per attempt |
 | `TELNYX_TTS_MAX_RETRIES` | no | `3` | Attempts per request (429/5xx/network, with backoff) |
 
-### Wiring it into an MCP client
+### Wiring a local clone into an MCP client
+
+Der Standardweg ist `npx` ([oben](#einrichten--ein-eintrag-kein-clone)). Wenn du am Code
+arbeitest und den Clone statt GitHub einbinden willst:
 
 ```json
 {
@@ -89,7 +262,12 @@ with exit code 78.
 Use absolute paths — the server is started as a child process and inherits no shell.
 Transport is stdio; stdout is the protocol channel, so all diagnostics go to stderr.
 
-## Mit Docker betreiben
+## Fallback: mit Docker betreiben
+
+Brauchst du nur, wenn der `npx`-Weg ausfällt — etwa weil auf dem Rechner kein `git` mit
+GitHub-Zugang eingerichtet ist, der Server strikt isoliert laufen soll oder du eine
+feste, lokal gebaute Fassung einfrieren willst. Der Nachteil liegt auf der Hand: ein
+Clone, ein Image-Build und ein laufender Docker-Daemon statt einer Zeile in der Config.
 
 Das Image ist ein zweistufiger Build auf `node:20-alpine`: Die erste Stufe installiert
 alles und kompiliert TypeScript, die zweite übernimmt nur `node_modules` (ohne
@@ -315,11 +493,16 @@ returns `null` for them instead of inventing a number.
 ## Development
 
 ```bash
-npm run lint     # eslint, type-aware
-npm run build    # tsc -> dist/
-npm test         # vitest, 90 tests, no network
-npm run check    # all three
+npm run lint         # eslint, type-aware
+npm run build        # tsc -> dist/
+npm test             # vitest, 90 tests, no network
+npm run check        # all three
+npm run verify:dist  # baut neu und bricht ab, wenn dist/ vom Commit abweicht
 ```
+
+`dist/` ist eingecheckt (Begründung [oben](#warum-dist-im-repository-liegt)) — jeder
+Commit, der `src/` berührt, muss das neu gebaute `dist/` mitbringen. Details in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 Dependency versions are pinned exactly, so `npm install` reproduces the tested tree even
 though no lockfile is committed. The Docker build follows the same rule: it runs

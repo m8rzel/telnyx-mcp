@@ -2,7 +2,8 @@
 node_modules/
 
 # Build output
-dist/
+# dist/ is intentionally committed: `npx git+ssh://…` must not compile on startup.
+# See CONTRIBUTING.md — run `npm run build` before every commit.
 *.tsbuildinfo
 
 # Environment — never commit real keys

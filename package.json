@@ -4,6 +4,10 @@
   "private": true,
   "description": "MCP server for Telnyx text-to-speech: list voices, synthesize speech to MP3 files, render [PAUSE n] scripts, estimate cost.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/m8rzel/telnyx-mcp.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=20.0.0"
@@ -23,7 +27,9 @@
     "lint": "eslint src tests",
     "format": "prettier --write \"{src,tests}/**/*.ts\" \"*.{json,md}\"",
     "format:check": "prettier --check \"{src,tests}/**/*.ts\" \"*.{json,md}\"",
-    "check": "npm run lint && npm run build && npm run test"
+    "check": "npm run lint && npm run build && npm run test",
+    "verify:dist": "npm run build && git diff --exit-code -- dist",
+    "prepublishOnly": "npm run check"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
