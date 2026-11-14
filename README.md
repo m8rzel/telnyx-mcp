@@ -185,8 +185,8 @@ segment joining, duration measurement and cost estimation.
 | Tool | Does | Parameters |
 | --- | --- | --- |
 | `list_voices` | Lists voices from `GET /v2/text-to-speech/voices`, filtered and paged. Returns `returned of matched of total` plus a per-provider count, never the full catalogue. | `language` (`"de"` matches de-DE/de-AT/de-CH, `"de-DE"` matches only that), `provider`, `search`, `limit` (default 50, max 200), `offset` |
-| `speak` | Synthesises one text and writes an MP3. Returns the absolute path, bytes, measured duration, character count and estimated cost — **never** the audio inline. | `text` (required), `voice` (required), `language`, `rate`, `text_type` (`text`\|`ssml`), `voice_settings`, `file_name` |
-| `render_script` | Renders a markdown script with `[PAUSE n]` markers into one continuous MP3: text is split at sentence boundaries, synthesised segment by segment, and joined with real silence. Returns total duration plus per-segment durations. | `script` (required), `voice` (required), `language`, `rate`, `voice_settings`, `max_chars` (default 1800), `lead_in_seconds`, `lead_out_seconds`, `file_name` |
+| `speak` | Synthesises one text and writes an MP3. Returns the absolute path, bytes, measured duration, character count and estimated cost, plus the MP3 as an audio block (up to 8 MB; off with `TELNYX_TTS_EMBED_AUDIO=false`). | `text` (required), `voice` (required), `language`, `rate`, `text_type` (`text`\|`ssml`), `voice_settings`, `file_name` |
+| `render_script` | Renders a markdown script with `[PAUSE n]` markers into one continuous MP3: text is split at sentence boundaries, synthesised segment by segment, and joined with real silence. Returns total duration plus per-segment durations, and the MP3 as an audio block up to 8 MB. | `script` (required), `voice` (required), `language`, `rate`, `voice_settings`, `max_chars` (default 1800), `lead_in_seconds`, `lead_out_seconds`, `file_name` |
 | `estimate_cost` | Prices a character count, a text or a full script **without calling the API**. For a script it also returns segment/pause statistics. | one of `characters` / `text` / `script`, plus `voice` (required), `max_chars` |
 
 ### Script format
@@ -238,6 +238,7 @@ with exit code 78.
 | `TELNYX_TTS_OUTPUT_DIR` | no | `<os-temp>/telnyx-mcp` | Where MP3 files are written |
 | `TELNYX_TTS_TIMEOUT_MS` | no | `120000` | HTTP timeout per attempt |
 | `TELNYX_TTS_MAX_RETRIES` | no | `3` | Attempts per request (429/5xx/network, with backoff) |
+| `TELNYX_TTS_EMBED_AUDIO` | no | `true` | `speak` and `render_script` also return the MP3 as an MCP audio block (up to 8 MB), so clients without access to the server's disk can attach it; `false` (also `0`/`no`/`off`) returns the JSON only |
 
 ### Wiring a local clone into an MCP client
 
@@ -359,7 +360,7 @@ Schlüssel nicht in der Argumentliste eines `docker`-Prozesses auftaucht.
 | Regel | Warum |
 | --- | --- |
 | `-i`, niemals `-t` | Ein TTY macht aus stdio ein Terminal: Zeileneditor, Echo und Steuersequenzen landen im Strom und zerlegen die JSON-RPC-Frames. `docker run -it` ist für eine Shell richtig und für einen MCP-Server falsch. |
-| Der Audio-Ordner braucht **innen und außen denselben absoluten Pfad** | `speak` und `render_script` liefern den *Pfad* der MP3 zurück, nie die Audiodaten. Mountest du `~/mcp/telnyx-audio` nach `/data`, bekommt der Client `/data/foo.mp3` — einen Pfad, den es auf deinem Rechner nicht gibt. Das Verzeichnis auf sich selbst zu mounten und `TELNYX_TTS_OUTPUT_DIR` darauf zu setzen, hält beide Seiten deckungsgleich. |
+| Der Audio-Ordner braucht **innen und außen denselben absoluten Pfad** | `speak` und `render_script` liefern den *Pfad* der MP3 zurück; die Audiodaten selbst nur als Audio-Block bis 8 MB (längere Dateien nur über den Pfad). Mountest du `~/mcp/telnyx-audio` nach `/data`, bekommt der Client `/data/foo.mp3` — einen Pfad, den es auf deinem Rechner nicht gibt. Das Verzeichnis auf sich selbst zu mounten und `TELNYX_TTS_OUTPUT_DIR` darauf zu setzen, hält beide Seiten deckungsgleich. |
 | `--rm` | Der MCP-Client startet pro Sitzung einen Container und beendet ihn beim Schließen. Ohne `--rm` bleibt bei jedem Neustart ein gestoppter Container liegen. |
 
 ### Dateirechte
@@ -523,8 +524,11 @@ suite runs offline and without an API key. Regenerate the fixtures with
   shaped like a bearer token before it is returned or logged.
 - `file_name` is reduced to a safe base name; the resolved path is verified to stay
   inside the configured output directory, so no input can write outside it.
-- Audio is written to disk and referenced by path. Nothing is base64-encoded into a
-  response — a 30-minute hypnosis script is around 14 MB.
+- Audio is written to disk and referenced by path. Files up to 8 MB are additionally
+  returned base64-encoded as an MCP audio block, so clients without access to this disk
+  (containers, remote agents) get the audio too; larger files — a 30-minute hypnosis
+  script is around 14 MB — are referenced by path only. `TELNYX_TTS_EMBED_AUDIO=false`
+  turns the audio block off.
 
 ## License
 

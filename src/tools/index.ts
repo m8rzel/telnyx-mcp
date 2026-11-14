@@ -4,6 +4,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 import type { Config } from '../config.js';
 import { estimateCost } from '../cost.js';
+import { audioResult, MAX_EMBED_AUDIO_BYTES } from '../embed.js';
 import { mp3Duration } from '../mp3.js';
 import { writeAudioFile } from '../output.js';
 import { renderScript } from '../render.js';
@@ -67,7 +68,8 @@ export function registerTools(server: McpServer, client: TelnyxClient, config: C
       title: 'Synthesise speech to an MP3 file',
       description:
         'Synthesises text with a Telnyx voice and writes an MP3 file. Returns the absolute file path, ' +
-        'byte size, measured duration, character count and the estimated list-price cost — never the audio itself.',
+        'byte size, measured duration, character count and the estimated list-price cost, plus the MP3 itself ' +
+        `as an audio block (up to ${MAX_EMBED_AUDIO_BYTES / 1024 / 1024} MB, unless TELNYX_TTS_EMBED_AUDIO=false).`,
       inputSchema: speakInput,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
@@ -95,16 +97,21 @@ export function registerTools(server: McpServer, client: TelnyxClient, config: C
           }`;
         }
 
-        return json({
-          file_path: path,
-          bytes: size,
-          content_type: contentType,
-          duration_seconds: durationSeconds,
-          ...(durationNote ? { duration_note: durationNote } : {}),
-          characters,
-          voice: args.voice,
-          estimated_cost: estimateCost(characters, args.voice),
-        });
+        return audioResult(
+          {
+            file_path: path,
+            bytes: size,
+            content_type: contentType,
+            duration_seconds: durationSeconds,
+            ...(durationNote ? { duration_note: durationNote } : {}),
+            characters,
+            voice: args.voice,
+            estimated_cost: estimateCost(characters, args.voice),
+          },
+          audio,
+          config.embedAudio,
+          contentType,
+        );
       }),
   );
 
@@ -116,7 +123,8 @@ export function registerTools(server: McpServer, client: TelnyxClient, config: C
         'Renders a markdown script into a single continuous MP3. Lines consisting only of "[PAUSE n]" become ' +
         'n seconds of real silence; text is split at sentence boundaries and synthesised segment by segment, ' +
         'then joined on MP3 frame level without re-encoding. Returns the file path, the measured total ' +
-        'duration and the duration of every segment.',
+        'duration and the duration of every segment, plus the MP3 as an audio block ' +
+        `(up to ${MAX_EMBED_AUDIO_BYTES / 1024 / 1024} MB, unless TELNYX_TTS_EMBED_AUDIO=false).`,
       inputSchema: renderScriptInput,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
@@ -135,24 +143,28 @@ export function registerTools(server: McpServer, client: TelnyxClient, config: C
         const path = await writeAudioFile(config.outputDir, result.audio, args.file_name);
         const { size } = await stat(path);
 
-        return json({
-          file_path: path,
-          bytes: size,
-          total_duration_seconds: result.totalDurationSeconds,
-          total_duration_formatted: formatDuration(result.totalDurationSeconds),
-          speech_duration_seconds: result.speechDurationSeconds,
-          silence_duration_seconds: result.silenceDurationSeconds,
-          characters: result.characters,
-          voice: args.voice,
-          audio_format: {
-            mpeg_version: result.template.version,
-            sample_rate: result.template.sampleRate,
-            bitrate_kbps: result.template.bitrateKbps,
-            channels: result.template.channelMode === 3 ? 1 : 2,
+        return audioResult(
+          {
+            file_path: path,
+            bytes: size,
+            total_duration_seconds: result.totalDurationSeconds,
+            total_duration_formatted: formatDuration(result.totalDurationSeconds),
+            speech_duration_seconds: result.speechDurationSeconds,
+            silence_duration_seconds: result.silenceDurationSeconds,
+            characters: result.characters,
+            voice: args.voice,
+            audio_format: {
+              mpeg_version: result.template.version,
+              sample_rate: result.template.sampleRate,
+              bitrate_kbps: result.template.bitrateKbps,
+              channels: result.template.channelMode === 3 ? 1 : 2,
+            },
+            estimated_cost: estimateCost(result.characters, args.voice),
+            parts: result.parts,
           },
-          estimated_cost: estimateCost(result.characters, args.voice),
-          parts: result.parts,
-        });
+          result.audio,
+          config.embedAudio,
+        );
       }),
   );
 

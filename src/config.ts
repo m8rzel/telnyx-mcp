@@ -6,12 +6,15 @@ export const ENV_API_KEY = 'TELNYX_API_KEY';
 export const ENV_OUTPUT_DIR = 'TELNYX_TTS_OUTPUT_DIR';
 export const ENV_TIMEOUT_MS = 'TELNYX_TTS_TIMEOUT_MS';
 export const ENV_MAX_RETRIES = 'TELNYX_TTS_MAX_RETRIES';
+export const ENV_EMBED_AUDIO = 'TELNYX_TTS_EMBED_AUDIO';
 
 export interface Config {
   apiKey: string;
   outputDir: string;
   timeoutMs: number;
   maxRetries: number;
+  /** Return the MP3 as an MCP audio block next to the JSON (clients can attach it without file access). */
+  embedAudio: boolean;
 }
 
 export class ConfigError extends Error {}
@@ -24,6 +27,14 @@ function readPositiveInt(name: string, fallback: number, env: NodeJS.ProcessEnv)
     throw new ConfigError(`${name} must be a positive integer, got "${raw}".`);
   }
   return value;
+}
+
+function readBoolean(name: string, fallback: boolean, env: NodeJS.ProcessEnv): boolean {
+  const raw = env[name]?.trim().toLowerCase();
+  if (raw === undefined || raw === '') return fallback;
+  if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
+  if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+  throw new ConfigError(`${name} must be true or false, got "${env[name]}".`);
 }
 
 /**
@@ -50,6 +61,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     outputDir,
     timeoutMs: readPositiveInt(ENV_TIMEOUT_MS, 120_000, env),
     maxRetries: readPositiveInt(ENV_MAX_RETRIES, 3, env),
+    embedAudio: readBoolean(ENV_EMBED_AUDIO, true, env),
   };
 }
 
