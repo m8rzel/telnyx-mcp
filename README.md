@@ -83,7 +83,14 @@ TELNYX_API_KEY=dein-key TELNYX_TTS_OUTPUT_DIR="$HOME/mcp/telnyx-audio" \
 
 `telnyx-mcp ready. Output directory: …` auf stderr heißt: läuft. Strg-C beendet.
 
-**HTTPS einrichten.** Einmal
+**HTTPS einrichten.** Zuerst nachsehen, was `git` als Credential-Helper benutzt:
+
+```bash
+git config --get credential.helper        # erwartet: osxkeychain
+git credential-osxkeychain                # muss existieren (Hinweistext = vorhanden)
+```
+
+Steht dort nichts oder etwas anderes, einmal setzen und ein Token hinterlegen:
 
 ```bash
 git config --global credential.helper osxkeychain
@@ -91,8 +98,24 @@ git clone https://github.com/m8rzel/telnyx-mcp.git /tmp/telnyx-auth-test
 ```
 
 Beim Clone fragt `git` nach Benutzer und Passwort; als Passwort ein Personal Access
-Token mit `repo`-Scope eingeben. Es liegt danach in der Keychain und `npx` kommt ohne
-weitere Eingabe durch. Das Verzeichnis kannst du wieder löschen.
+Token mit `repo`-Scope eingeben (nicht das GitHub-Passwort). Es liegt danach in der
+Keychain, und `npx` kommt ohne weitere Eingabe durch. Das Testverzeichnis kannst du
+wieder löschen. Prüfen, dass es sitzt: `git ls-remote https://github.com/m8rzel/telnyx-mcp.git`
+läuft ohne Rückfrage durch.
+
+Die Haken dieses Wegs: Das Token hat ein Ablaufdatum, und wenn es abläuft, startet der
+Server ohne erkennbaren Zusammenhang nicht mehr. Ein klassisches PAT gilt außerdem für
+*alle* privaten Repos des Kontos, nicht nur für dieses — ein Fine-grained Token mit
+Repository-Zugriff nur auf `m8rzel/telnyx-mcp` und `Contents: Read` ist die engere Wahl.
+Und `git config --global` wirkt auf jedes Repo auf dem Rechner.
+
+**So sieht es aus, wenn die Credentials fehlen:** `npx` bricht mit **Exit-Code 128** ab
+(der Fehlercode von `git clone`) und schreibt keine erklärende Meldung in die Ausgabe —
+nachgeprüft in einer Umgebung ohne jeden GitHub-Zugang, für `git+ssh` wie für
+`git+https`. Startet der Server im Client also ohne verständlichen Grund nicht, ist das
+der erste Verdacht. Den Aufruf einmal von Hand im Terminal starten, dann steht die
+eigentliche Ursache da (`Permission denied (publickey)` bzw.
+`could not read Username`).
 
 Die radikale Alternative: Repo öffentlich machen und unter `@m8rzel/telnyx-mcp` auf npm
 veröffentlichen — dann wäre der Eintrag schlicht `npx -y @m8rzel/telnyx-mcp`, ohne jede
