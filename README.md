@@ -116,18 +116,24 @@ bewusster Schritt: Tag in der Config hochziehen, Client neu starten.
 ### Startzeit
 
 Gemessen vom `npx`-Aufruf bis zur `initialize`-Antwort auf stdout, Node 22, Git-Remote
-lokal (die Netzlatenz zu GitHub kommt obendrauf, erfahrungsgemäß ein bis drei Sekunden):
+lokal (die Netzlatenz zu GitHub kommt obendrauf):
 
-| Lauf | Zeit |
-| --- | --- |
-| erster Start, leerer npm-Cache | **11,6 s** |
-| jeder weitere Start | **0,9–1,5 s** |
+| Lauf | Zeit | Was passiert |
+| --- | --- | --- |
+| erster Start, leerer npm-Cache | **12–30 s** (4 Messungen: 11,6 / 27,5 / 27,9 / 29,9 s) | Lädt den MCP-SDK-Baum herunter: 92 Pakete, rein netzabhängig |
+| jeder weitere Start | **0,7–1,5 s** | `git ls-remote` plus Start aus dem Cache |
 
-Der erste Start lädt den MCP-SDK-Baum (92 Pakete) herunter, danach liegt alles im
-npm-Cache und `npx` prüft nur noch per `git ls-remote`, ob sich der Stand geändert hat.
-Kompiliert wird **nie** — deshalb ist `dist/` eingecheckt (siehe unten). Zum Vergleich:
-dieselbe Konstellation mit einem `prepare`-Script, das beim Start TypeScript baut,
-braucht kalt 15,2 s und setzt eine funktionierende Toolchain auf dem Zielrechner voraus.
+Kompiliert wird **nie** — deshalb ist `dist/` eingecheckt (siehe unten).
+
+Praktisch heißt das: **einmal im Terminal starten, bevor du den Eintrag in den Client
+schreibst.** Danach ist der Cache warm und der Client startet in rund einer Sekunde. Ein
+kalter Erststart von bis zu einer halben Minute kann sonst in den Start-Timeout eines
+MCP-Clients laufen (bei Claude Code per `MCP_TIMEOUT` in Millisekunden anpassbar) — der
+Server wäre dann nicht kaputt, nur zu langsam, und beim nächsten Versuch sofort da.
+
+Zwei Feinheiten: Ein geänderter Commit-ish (Tag statt Branch) ist ein eigener
+Cache-Eintrag, kostet also einmal wieder einen kalten Start. Und ohne Pin ist jeder neue
+Commit auf `main` ebenfalls ein kalter Start.
 
 ### Warum `dist/` im Repository liegt
 
